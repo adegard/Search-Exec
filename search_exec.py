@@ -22,7 +22,6 @@ class CodeExtractor(HTMLParser):
         if tag in ['code', 'pre'] and self.in_code:
             self.in_code = False
             code_text = "".join(self.current_code).strip()
-            # Clean up excessive internal whitespace/newlines but preserve structure
             if code_text and code_text not in self.code_blocks:
                 self.code_blocks.append(code_text)
             self.current_code = []
@@ -77,20 +76,17 @@ def fetch_page(url):
     return None
 
 def score_code_block(code):
-    """Score code blocks to prioritize real scripts/commands over single-word tokens."""
     score = 0
     lines = code.splitlines()
     
-    # Penalize single-word or very short snippets (e.g. "apt", "ls")
+    # Penalize single-word tokens or very short fragments
     if len(code) < 10 or (len(lines) == 1 and ' ' not in code):
         return -100
         
-    # Reward multi-line code blocks or scripts
     score += len(lines) * 5
     score += len(code) // 10
     
-    # Reward typical shell command indicators / operators
-    indicators = ['sudo', 'apt', 'dpkg', 'pacman', 'yum', 'rpm', 'grep', 'awk', 'sort', '|', '>', '$', '#']
+    indicators = ['sudo', 'apt', 'dpkg', 'pacman', 'yum', 'rpm', 'grep', 'awk', 'sort', '|', '>', '$', '#', 'for', 'echo']
     for ind in indicators:
         if ind in code:
             score += 3
@@ -122,33 +118,39 @@ def main():
         print("[-] No code blocks (<code>/<pre>) found on the target page.")
         sys.exit(1)
         
-    # Filter and sort code blocks by score (best first)
     scored_blocks = [(block, score_code_block(block)) for block in parser.code_blocks]
-    scored_blocks = [item for item in scored_blocks if item[1] > 0] # Drop garbage single words
+    scored_blocks = [item for item in scored_blocks if item[1] > 0]
     scored_blocks.sort(key=lambda x: x[1], reverse=True)
     
     if not scored_blocks:
         print("[-] No valid command/script code blocks found.")
         sys.exit(1)
         
-    print(f"\n[+] Found {len(parser.code_blocks)} total blocks, filtered down to {len(scored_blocks)} best command snippet(s):\n")
+    # Get top 3 (or fewer if less available)
+    top_snippets = scored_blocks[:3]
+    print(f"\n[+] Top {len(top_snippets)} recommended snippet(s):\n")
     
-    # Take the top best snippet automatically as the primary recommendation
-    best_code, best_score = scored_blocks[0]
-    
-    print("--- [ Best Recommended Snippet ] ---")
-    print(best_code)
-    print("-" * 34)
-    
-    choice = input(f"\nExecute this snippet in CLI? [y/N]: ").strip().lower()
-    if choice == 'y':
-        print(f"[*] Running command...\n")
-        try:
-            subprocess.run(best_code, shell=True, check=True)
-        except subprocess.CalledProcessError as e:
-            print(f"[-] Command failed with exit code {e.returncode}")
-    else:
-        print("Skipped execution.")
+    for idx, (code, score) in enumerate(top_snippets, 1):
+        print(f"=== [ Snippet {idx} ] ===")
+        print(code)
+        print("=" * 22 + "\n")
+        
+    try:
+        choice = input(f"Select a snippet to execute [1-{len(top_snippets)}] or press Enter to exit: ").strip()
+        if not choice:
+            print("Exited.")
+            sys.exit(0)
+            
+        selected_idx = int(choice) - 1
+        if 0 <= selected_idx < len(top_snippets):
+            chosen_code = top_snippets[selected_idx][0]
+            print(f"\n[*] Executing Snippet {selected_idx + 1}...\n")
+            # Running without capturing output streams allows interactive prompts (like sudo password) and live output
+            subprocess.run(chosen_code, shell=True)
+        else:
+            print("[-] Invalid selection.")
+    except ValueError:
+        print("[-] Invalid input.")
 
 if __name__ == "__main__":
     main()
