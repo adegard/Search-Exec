@@ -30,7 +30,7 @@ class CodeExtractor(HTMLParser):
         if self.in_code:
             self.current_code.append(data)
 
-def search_duckduckgo(query):
+def search_duckduckgo_urls(query, max_results=3):
     url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
     req = urllib.request.Request(
         url, 
@@ -44,6 +44,7 @@ def search_duckduckgo(query):
         with urllib.request.urlopen(req) as response:
             html_content = response.read().decode('utf-8')
             hrefs = re.findall(r'href="([^"]+uddg=[^"]+)"', html_content)
+            urls = []
             for href in hrefs:
                 href = html.unescape(href)
                 if href.startswith('//'):
@@ -53,10 +54,15 @@ def search_duckduckgo(query):
                 parsed = urllib.parse.urlparse(href)
                 qs = urllib.parse.parse_qs(parsed.query)
                 if 'uddg' in qs:
-                    return qs['uddg'][0]
+                    target = qs['uddg'][0]
+                    if target not in urls:
+                        urls.append(target)
+                if len(urls) >= max_results:
+                    break
+            return urls
     except Exception as e:
         print(f"Search error: {e}")
-    return None
+    return []
 
 def fetch_page(url):
     req = urllib.request.Request(
@@ -72,26 +78,35 @@ def fetch_page(url):
         with urllib.request.urlopen(req) as response:
             return response.read().decode('utf-8', errors='ignore')
     except Exception as e:
-        print(f"Failed to fetch page: {e}")
+        print(f"[-] Failed to fetch page ({e})")
     return None
 
 def score_code_block(code):
     score = 0
     lines = code.splitlines()
     
-    # Penalize single-word tokens or very short fragments
-    if len(code) < 10 or (len(lines) == 1 and ' ' not in code):
+    if len(code) < 5 or (len(lines) == 1 and ' ' not in code):
         return -100
         
     score += len(lines) * 5
     score += len(code) // 10
     
-    indicators = ['sudo', 'apt', 'dpkg', 'pacman', 'yum', 'rpm', 'grep', 'awk', 'sort', '|', '>', '$', '#', 'for', 'echo']
+    indicators = ['sudo', 'apt', 'dpkg', 'pacman', 'yum', 'rpm', 'grep', 'awk', 'sort', '|', '>', '$', '#', 'for', 'echo', 'rm', 'find', 'opencode', 'uninstall']
     for ind in indicators:
         if ind in code:
             score += 3
             
     return score
+
+def clean_command_for_execution(code):
+    """Strips documentation syntax artifacts (like {{ }}, [opt1|opt2], etc.) to make commands executable."""
+    # Remove template braces {{ ... }}
+    code = re.sub(r'\{\{(.*?)\}\}', r'\1', code)
+    # Handle option choices like [-f|--force] -> pick the first option (-f)
+    code = re.sub(r'\[([^\]\|]+)\|[^\]]+\]', r'\1', code)
+    # Strip remaining square brackets wrapping single options like [-f] -> -f
+    code = re.sub(r'\[(-[^\]]+)\]', r'\1', code)
+    return code.strip()
 
 def main():
     if len(sys.argv) < 2:
@@ -101,32 +116,41 @@ def main():
     query = " ".join(sys.argv[1:])
     print(f"[*] Searching DuckDuckGo for: {query}...")
     
-    target_url = search_duckduckgo(query)
-    if not target_url:
+    target_urls = search_duckduckgo_urls(query, max_results=6)
+    if not target_urls:
         print("[-] No search results found.")
         sys.exit(1)
         
-    print(f"[+] Opening top result: {target_url}")
-    page_html = fetch_page(target_url)
-    if not page_html:
-        sys.exit(1)
-        
-    parser = CodeExtractor()
-    parser.feed(page_html)
+    scored_blocks = []
     
-    if not parser.code_blocks:
-        print("[-] No code blocks (<code>/<pre>) found on the target page.")
-        sys.exit(1)
+    for url in target_urls:
+        print(f"[+] Opening result: {url}")
+        page_html = fetch_page(url)
+        if not page_html:
+            continue
+            
+        parser = CodeExtractor()
+        parser.feed(page_html)
         
-    scored_blocks = [(block, score_code_block(block)) for block in parser.code_blocks]
-    scored_blocks = [item for item in scored_blocks if item[1] > 0]
+        if not parser.code_blocks:
+            print("[-] No code blocks found on this page. Trying next result...")
+            continue
+            
+        page_scored = [(block, score_code_block(block)) for block in parser.code_blocks]
+        page_scored = [item for item in page_scored if item[1] > -50]
+        
+        if page_scored:
+            scored_blocks = page_scored
+            break
+        else:
+            print("[-] Code blocks found were too short. Trying next result...")
+
     scored_blocks.sort(key=lambda x: x[1], reverse=True)
     
     if not scored_blocks:
-        print("[-] No valid command/script code blocks found.")
+        print("[-] No valid command/script code blocks found across the top results.")
         sys.exit(1)
         
-    # Get top 3 (or fewer if less available)
     top_snippets = scored_blocks[:3]
     print(f"\n[+] Top {len(top_snippets)} recommended snippet(s):\n")
     
@@ -143,10 +167,11 @@ def main():
             
         selected_idx = int(choice) - 1
         if 0 <= selected_idx < len(top_snippets):
-            chosen_code = top_snippets[selected_idx][0]
-            print(f"\n[*] Executing Snippet {selected_idx + 1}...\n")
-            # Running without capturing output streams allows interactive prompts (like sudo password) and live output
-            subprocess.run(chosen_code, shell=True)
+            raw_code = top_snippets[selected_idx][0]
+            clean_code = clean_command_for_execution(raw_code)
+            
+            print(f"\n[*] Executing cleaned command: {clean_code}\n")
+            subprocess.run(clean_code, shell=True)
         else:
             print("[-] Invalid selection.")
     except ValueError:
