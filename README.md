@@ -29,6 +29,11 @@ git clone https://github.com/adegard/search-exec.git
 cd search-exec
 chmod +x search_exec.py
 ```
+
+## Usage
+```bash
+python search_exec.py "linux command to list apk"
+```
 ---
 
 For an overview of all my other projects, see https://adegard.github.io/blog/
