@@ -28,3 +28,7 @@ Clone the repository and make the script executable:
 git clone https://github.com/adegard/search-exec.git
 cd search-exec
 chmod +x search_exec.py
+```
+---
+
+For an overview of all my other projects, see https://adegard.github.io/blog/
