@@ -25,6 +25,6 @@ A fast, lightweight, zero-dependency CLI tool that searches the web for command-
 Clone the repository and make the script executable:
 
 ```bash
-git clone [https://github.com/your-username/search-exec.git](https://github.com/your-username/search-exec.git)
+git clone [https://github.com/your-username/search-exec.git](https://github.com/adegard/Search-Exec)
 cd search-exec
 chmod +x search_exec.py
